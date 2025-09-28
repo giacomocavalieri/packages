@@ -142,10 +142,25 @@ fn internet_points(context: Context) -> Response {
 
 fn search(request: Request, context: Context) -> Response {
   let search_term = get_search_parameter(request)
-  let assert Ok(packages) = case search_term {
-    "" -> storage.list_packages(context.db)
+  let assert Ok(search_outcome) = case search_term {
+    "" -> storage.list_packages(context.db) |> result.map(text_search.Packages)
     _ -> text_search.lookup(context.search_index, search_term)
   }
+
+  case search_outcome {
+    text_search.Packages(packages:) ->
+      packages_list(context, packages, search_term)
+    text_search.DidYouMean(suggestion:) ->
+      page.did_you_mean(suggestion, search_term)
+      |> wisp.html_response(200)
+  }
+}
+
+fn packages_list(
+  context: Context,
+  packages: List(String),
+  search_term: String,
+) -> Response {
   let assert Ok(packages) =
     storage.ranked_package_summaries(context.db, packages, search_term)
   let packages = case search_term {

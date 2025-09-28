@@ -12,6 +12,24 @@ bag_get(Bag, Key) ->
     Items2 = lists:map(fun(Elem) -> element(2, Elem) end, Items1),
     {ok, Items2}.
 
+bag_keys(Bag) ->
+  case ets:first(Bag) of
+    '$end_of_table' -> [];
+    Key ->
+      % calls to `ets:next` in the loop might fail if a key is deleted in
+      % between calls!
+      try {ok, bag_keys_loop(Bag, Key, [Key])}
+      catch
+        _ -> {error, nil}
+      end
+  end.
+
+bag_keys_loop(Bag, PreviousKey, Keys) ->
+  case ets:next(Bag, PreviousKey) of
+    '$end_of_table' -> Keys;
+    NewKey -> bag_keys_loop(Bag, NewKey, [NewKey | Keys])
+  end.
+
 bag_insert(Bag, Key, Value) ->
     ets:insert(Bag, {Key, Value}),
     {ok, nil}.

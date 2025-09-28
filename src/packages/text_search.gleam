@@ -1,4 +1,6 @@
+import edit_distance
 import ethos.{type BagTable}
+import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/int
 import gleam/list
@@ -42,23 +44,67 @@ pub fn update(
   insert(index, name, description)
 }
 
+pub type LookupOutcome {
+  Packages(packages: List(String))
+  DidYouMean(suggestion: String)
+}
+
 pub fn lookup(
   index: TextSearchIndex,
   phrase: String,
-) -> Result(List(String), Error) {
+) -> Result(LookupOutcome, Error) {
   let phrase = string.lowercase(phrase)
-  let keywords =
-    stem_words(phrase)
-    |> list.flat_map(expand_search_term)
 
-  keywords
+  stem_words(phrase)
+  |> list.flat_map(expand_search_term)
   |> list.try_map(ethos.get(index.table, _))
   |> result.replace_error(error.EtsTableError)
-  |> result.map(fn(packages_names) {
-    packages_names
-    |> list.flatten
-    |> rank_results(phrase)
+  |> result.try(fn(packages_names) {
+    case rank_results(list.flatten(packages_names), phrase) {
+      [_, ..] as packages -> Ok(Packages(packages:))
+      // If there's no results matching the given query we try and guess what
+      // the user might have wanted to type.
+      [] -> {
+        use words <- result.try(
+          ethos.keys(index.table)
+          |> result.replace_error(error.EtsTableError),
+        )
+        case did_you_mean(given: phrase, one_of: words) {
+          Ok(suggestion) -> Ok(DidYouMean(suggestion:))
+          Error(_) -> Ok(Packages(packages: []))
+        }
+      }
+    }
   })
+}
+
+fn did_you_mean(
+  given phrase: String,
+  one_of words: List(String),
+) -> Result(String, Nil) {
+  // We want to limit the maximum edit distance. Otherwise we could end up
+  // suggesting fixes that are not related at all to the original query.
+  let phrase_length = string.length(phrase)
+  let limit = int.max(1, phrase_length) / 3
+
+  list.filter_map(words, fn(word) {
+    let word_length = string.length(word)
+    let minimum_distance = int.absolute_value(word_length - phrase_length)
+
+    // If the minimum distance is greater than the allowed limit then we don't
+    // even waste any time computing the edit distance of the two strings!
+    use <- bool.guard(when: minimum_distance > limit, return: Error(Nil))
+    let distance = edit_distance.levenshtein(phrase, word)
+    case distance > limit {
+      True -> Error(Nil)
+      False -> Ok(#(word, distance))
+    }
+  })
+  // We only pick the word with the smallest possible edit distance that's below
+  // the given threshold
+  |> list.sort(fn(one, other) { int.compare(one.1, other.1) })
+  |> list.first
+  |> result.map(fn(suggestion) { suggestion.0 })
 }
 
 /// Given a list with packages matching the searched phrase we assign them a

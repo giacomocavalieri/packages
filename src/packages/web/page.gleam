@@ -23,6 +23,21 @@ pub fn packages_list(
   |> layout
 }
 
+pub fn did_you_mean(suggestion: String, _search_term: String) -> String {
+  html.div([attribute.class("content")], {
+    [
+      html.header([class("page-header")], [
+        text("I couldn't find any package matching your search."),
+      ]),
+      search_form(suggestion),
+      html.p([attribute.class("package-list-message")], [
+        element.text("Did you mean " <> suggestion <> "?"),
+      ]),
+    ]
+  })
+  |> layout
+}
+
 pub type Stats {
   Stats(
     package_counts: List(#(String, Int)),

@@ -6,6 +6,9 @@ pub fn new() -> BagTable(k, v)
 @external(erlang, "ethos_ffi", "bag_get")
 pub fn get(table: BagTable(k, v), key: k) -> Result(List(v), Nil)
 
+@external(erlang, "ethos_ffi", "bag_keys")
+pub fn keys(table: BagTable(k, v)) -> Result(List(v), Nil)
+
 @external(erlang, "ethos_ffi", "bag_insert")
 pub fn insert(table: BagTable(k, v), key: k, value: v) -> Result(Nil, Nil)
 
