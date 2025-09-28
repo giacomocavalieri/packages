@@ -1,5 +1,5 @@
 import ethos.{type BagTable}
-import gleam/dict
+import gleam/dict.{type Dict}
 import gleam/int
 import gleam/list
 import gleam/option
@@ -26,11 +26,7 @@ pub fn insert(
   case storage.is_ignored_package(name) {
     True -> Ok(Nil)
     False ->
-      name
-      |> string.append(" ")
-      |> string.append(string.replace(name, "_", " "))
-      |> string.append(" ")
-      |> string.append(description)
+      { name <> " " <> string.replace(name, "_", " ") <> " " <> description }
       |> stem_words
       |> list.try_each(fn(word) { ethos.insert(index.table, word, name) })
       |> result.replace_error(error.EtsTableError)
@@ -51,40 +47,62 @@ pub fn lookup(
   phrase: String,
 ) -> Result(List(String), Error) {
   let phrase = string.lowercase(phrase)
-  stem_words(phrase)
-  |> list.flat_map(expand_search_term)
+  let keywords =
+    stem_words(phrase)
+    |> list.flat_map(expand_search_term)
+
+  keywords
   |> list.try_map(ethos.get(index.table, _))
-  |> result.map(fn(names) {
-    names
+  |> result.replace_error(error.EtsTableError)
+  |> result.map(fn(packages_names) {
+    packages_names
     |> list.flatten
-    |> list.fold(dict.new(), fn(counters, name) {
-      dict.upsert(counters, name, fn(x) { option.unwrap(x, 0) + 1 })
-    })
+    |> rank_results(phrase)
+  })
+}
+
+/// Given a list with packages matching the searched phrase we assign them a
+/// ranking and return them in a list with no duplicates sorted from best match
+/// to worst match.
+///
+fn rank_results(packages: List(String), phrase: String) -> List(String) {
+  let ranking =
+    // Each package starts with a score that is the number of times it appears
+    // in the search results coming from `ethos`.
+    count_occurrences(packages)
     |> dict.to_list
     |> list.map(fn(pair) {
-      case pair.0 {
-        // Rank up proritised packages
+      // We then tweak the ranking to prioritise some official Gleam packages.
+      let #(package_name, score) = pair
+      case package_name {
         "gleam_stdlib"
         | "gleam_javascript"
         | "gleam_erlang"
         | "gleam_otp"
         | "gleam_json"
-        | "gleam_time" -> #(pair.0, pair.1 + 10)
+        | "gleam_time" -> #(package_name, score + 10)
         _ -> pair
       }
     })
-    |> list.sort(fn(a, b) {
-      case a, b {
-        // Exact matches come first
-        #(name, _), _ if name == phrase -> order.Lt
-        _, #(name, _) if name == phrase -> order.Gt
-        // Otherwise compare the score
-        _, _ -> int.compare(b.1, a.1)
-      }
-    })
-    |> list.map(fn(pair) { pair.0 })
+
+  list.sort(ranking, fn(one, other) {
+    case one, other {
+      // Exact matches always come first.
+      #(name, _), _ if name == phrase -> order.Lt
+      _, #(name, _) if name == phrase -> order.Gt
+      // Otherwise compare the scores.
+      #(_, score_one), #(_, score_other) -> int.compare(score_other, score_one)
+    }
   })
-  |> result.replace_error(error.EtsTableError)
+  |> list.map(fn(pair) { pair.0 })
+}
+
+fn count_occurrences(list: List(a)) -> Dict(a, Int) {
+  list.fold(list, dict.new(), fn(counters, name) {
+    dict.upsert(counters, name, fn(occurrences) {
+      option.unwrap(occurrences, 0) + 1
+    })
+  })
 }
 
 /// Some words have common misspellings or associated words so we add those to
